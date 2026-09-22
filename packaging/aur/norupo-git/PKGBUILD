@@ -1,0 +1,63 @@
+# Maintainer: Mahmoud Walid <modywmbadr@gmail.com>
+#
+# Builds Norupo from the current checkout. This is the PKGBUILD the release
+# workflow uses to produce the `.pkg.tar.zst` attached to every GitHub Release,
+# and the one to use when testing packaging changes locally:
+#
+#   cd packaging/aur/norupo-git && makepkg -si
+
+pkgname=norupo-git
+_pkgname=norupo
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Self-hosted local tunneling service (edge server + CLI agent) - built from source tree"
+arch=('x86_64' 'aarch64')
+url="https://github.com/Mahmoud-walid/Norupo-tunnel"
+license=('Apache-2.0')
+depends=('gcc-libs')
+makedepends=('cargo')
+provides=('norupo' 'norupo-server')
+conflicts=('norupo' 'norupo-bin')
+backup=('etc/norupo/server.env')
+source=()
+sha256sums=()
+
+# The repository root, four levels up from packaging/aur/norupo-git.
+_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+
+pkgver() {
+  cd "$_repo"
+  # `0.1.0.r42.gabc1234` sorts correctly against released versions.
+  local base
+  base="$(awk -F'"' '/^version/ { print $2; exit }' Cargo.toml)"
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    printf '%s.r%s.g%s' "$base" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+  else
+    printf '%s' "$base"
+  fi
+}
+
+build() {
+  cd "$_repo"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo build --release --all-features
+}
+
+check() {
+  cd "$_repo"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo test --workspace
+}
+
+package() {
+  cd "$_repo"
+  install -Dm0755 "$srcdir/target/release/norupo" "$pkgdir/usr/bin/norupo"
+  install -Dm0755 "$srcdir/target/release/norupo-server" "$pkgdir/usr/bin/norupo-server"
+  install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/$_pkgname/LICENSE"
+  install -Dm0644 README.md "$pkgdir/usr/share/doc/$_pkgname/README.md"
+  install -Dm0644 packaging/systemd/norupo-server.service \
+    "$pkgdir/usr/lib/systemd/system/norupo-server.service"
+  install -Dm0644 packaging/systemd/server.env "$pkgdir/etc/norupo/server.env"
+}
