@@ -37,11 +37,16 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             cross: false
+          # Both macOS targets build on Apple Silicon: Xcode's toolchain
+          # cross-compiles to x86_64 natively, so the Intel build needs no
+          # emulation and no Intel runner. GitHub is retiring `macos-13`, and
+          # a retired image does not fail - it queues forever, holding the
+          # whole release hostage behind one unschedulable job.
           - target: aarch64-apple-darwin
             os: macos-latest
             cross: false
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             cross: false
           - target: x86_64-pc-windows-msvc
             os: windows-latest
@@ -102,6 +107,13 @@ jobs:
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           # Checksums are what the AUR PKGBUILD and the install script verify.
           (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
+
+          # Cross-compiled targets are worth checking: a misconfigured
+          # --target silently produces a host-architecture binary that only
+          # fails on the user's machine.
+          if command -v file >/dev/null 2>&1; then
+            file "dist/$name/norupo" "dist/$name/norupo-server"
+          fi
 
       - name: Package (windows)
         if: runner.os == 'Windows'
