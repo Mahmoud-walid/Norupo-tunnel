@@ -1,0 +1,16 @@
+/target
+**/*.rs.bk
+*.pdb
+
+# Local operator config that may contain real tokens.
+/tokens.json
+/norupo.local.*
+
+# Packaging build output
+/packaging/aur/*/src/
+/packaging/aur/*/pkg/
+/packaging/aur/*/*.tar.gz
+/packaging/aur/*/*.pkg.tar.zst
+/dist/
+
+.DS_Store
