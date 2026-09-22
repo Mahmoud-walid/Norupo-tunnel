@@ -1,0 +1,37 @@
+# Dependency updates.
+#
+# `cargo audit` in CI tells us when a dependency has a known advisory; it does
+# not fix anything. This is the half that opens the pull request.
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    # One PR for routine patch/minor bumps rather than twenty. A major bump
+    # gets its own PR, because it needs to be read.
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "deps"
+    labels: [dependencies]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    # Pinned action versions rot quietly: a retired runner image or a
+    # deprecated action only shows up when a release fails, which is exactly
+    # how the macos-13 outage in #22 was found.
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+    labels: [dependencies, ci]
