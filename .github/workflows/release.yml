@@ -28,7 +28,8 @@ jobs:
           # vintage and every distro — Arch, Debian, Alpine, NixOS alike.
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
-            cross: true
+            cross: false
+            musl: true
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             cross: true
@@ -60,6 +61,13 @@ jobs:
         with:
           key: release-${{ matrix.target }}
 
+      # Only aarch64 needs a cross-compilation container; x86_64 musl builds
+      # natively with musl-tools, which keeps `cargo install cross` (several
+      # minutes) off the critical path.
+      - name: Install musl toolchain
+        if: matrix.musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
       - name: Install cross
         if: matrix.cross
         run: cargo install cross --locked --version 0.2.5
@@ -77,9 +85,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          [ "${{ github.event_name }}" = "workflow_dispatch" ] && version="${{ inputs.tag }}"
-          name="norupo-${version#v}-${{ matrix.target }}"
+          # `[ ... ] && x=y` returns 1 when the test is false, which under
+          # `set -e` exits the step - on precisely the tag-push event this
+          # workflow exists to serve. Use a real `if`.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ inputs.tag }}"
+          else
+            version="$GITHUB_REF_NAME"
+          fi
+          version="${version#v}"
+          name="norupo-${version}-${{ matrix.target }}"
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/norupo" "dist/$name/"
           cp "target/${{ matrix.target }}/release/norupo-server" "dist/$name/"
@@ -93,9 +108,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          [ "${{ github.event_name }}" = "workflow_dispatch" ] && version="${{ inputs.tag }}"
-          name="norupo-${version#v}-${{ matrix.target }}"
+          # `[ ... ] && x=y` returns 1 when the test is false, which under
+          # `set -e` exits the step - on precisely the tag-push event this
+          # workflow exists to serve. Use a real `if`.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ inputs.tag }}"
+          else
+            version="$GITHUB_REF_NAME"
+          fi
+          version="${version#v}"
+          name="norupo-${version}-${{ matrix.target }}"
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/norupo.exe" "dist/$name/"
           cp "target/${{ matrix.target }}/release/norupo-server.exe" "dist/$name/"
@@ -120,10 +142,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Prepare a build user
-        # makepkg refuses to run as root, by design.
+      - name: Install build dependencies
+        # makepkg refuses to run as root by design, and an unprivileged user
+        # cannot let `makepkg -s` install makedepends through pacman. So the
+        # dependencies go in here, as root, and makepkg runs without `-s`.
+        # `rust` is the package that provides cargo on Arch; `rustup` does not.
         run: |
-          pacman -Sy --noconfirm --needed git rustup
+          pacman -Sy --noconfirm --needed git rust
           useradd -m builder
           chown -R builder:builder .
 
@@ -131,9 +156,8 @@ jobs:
         run: |
           su builder -c '
             set -eux
-            rustup default stable
             cd packaging/aur/norupo-git
-            makepkg -sf --noconfirm --skipinteg
+            makepkg -f --noconfirm --skipinteg
           '
 
       - uses: actions/upload-artifact@v4
@@ -201,12 +225,33 @@ jobs:
 
             Verify a download against `SHA256SUMS` before running it.
 
+  # `secrets` is not available in a job-level `if`, so the presence of the AUR
+  # key has to be surfaced as a job output. Without this, every tagged release
+  # goes red AFTER publishing successfully whenever the key is unset - which
+  # teaches people to ignore a red release badge.
+  aur-configured:
+    name: Check AUR credentials
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.repository == 'Mahmoud-walid/Norupo-tunnel'
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -n "$AUR_SSH_PRIVATE_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AUR_SSH_PRIVATE_KEY is not set; skipping the AUR publish."
+          fi
+
   aur:
     name: Publish to the AUR
     runs-on: ubuntu-latest
-    needs: publish
-    # Forks and dispatch runs must not try to push to the AUR.
-    if: github.event_name == 'push' && github.repository == 'Mahmoud-walid/Norupo-tunnel'
+    needs: [publish, aur-configured]
+    if: needs.aur-configured.outputs.configured == 'true'
     strategy:
       fail-fast: false
       matrix:
