@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/norupo-proto", "crates/norupo-core"]
+members = ["crates/norupo-proto", "crates/norupo-core", "crates/norupo-server"]
 
 [workspace.package]
 version = "0.1.0"
