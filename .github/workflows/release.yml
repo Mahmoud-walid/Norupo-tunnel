@@ -104,6 +104,19 @@ jobs:
           cp "target/${{ matrix.target }}/release/norupo" "dist/$name/"
           cp "target/${{ matrix.target }}/release/norupo-server" "dist/$name/"
           cp README.md LICENSE "dist/$name/"
+
+          # Linux archives carry the systemd unit. norupo-bin installs it from
+          # here, so without this that package declares a `backup=` file it
+          # never ships - and anyone installing the prebuilt binaries to run an
+          # edge server gets no unit at all. A systemd unit in a macOS archive
+          # would just be noise, hence the guard.
+          case "${{ matrix.target }}" in
+            *linux*)
+              mkdir -p "dist/$name/systemd"
+              cp packaging/systemd/norupo-server.service \
+                 packaging/systemd/server.env "dist/$name/systemd/"
+              ;;
+          esac
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           # Checksums are what the AUR PKGBUILD and the install script verify.
           (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")

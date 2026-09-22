@@ -40,4 +40,10 @@ package() {
   install -Dm0755 norupo-server "$pkgdir/usr/bin/norupo-server"
   install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm0644 README.md "$pkgdir/usr/share/doc/$_pkgname/README.md"
+
+  # Same server-side files as the `norupo` package, so the two really are
+  # interchangeable and `backup=` above names files that ship.
+  install -Dm0644 systemd/norupo-server.service \
+    "$pkgdir/usr/lib/systemd/system/norupo-server.service"
+  install -Dm0644 systemd/server.env "$pkgdir/etc/norupo/server.env"
 }
