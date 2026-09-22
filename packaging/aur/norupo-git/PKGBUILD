@@ -21,6 +21,9 @@ conflicts=('norupo' 'norupo-bin')
 backup=('etc/norupo/server.env')
 source=()
 sha256sums=()
+# No separate debug package: it is build-id symbols, and the release workflow
+# attaches whatever this PKGBUILD produces.
+options=(!debug)
 
 # The repository root, four levels up from packaging/aur/norupo-git.
 _repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
