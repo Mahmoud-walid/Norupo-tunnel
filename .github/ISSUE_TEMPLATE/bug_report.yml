@@ -1,0 +1,78 @@
+name: Bug report
+description: Something does not work the way it is documented to.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most tunnel problems are one of three things: DNS not pointing at the
+        edge, the agent not reaching its local service, or a hostname collision.
+        `norupo doctor` rules out the first one in a second, so please run it
+        before filing.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+      placeholder: |
+        Requests to https://my-app.tunnel.example.com return 504, but the local
+        service answers instantly on localhost:3000.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The exact commands, including flags. Redact tokens.
+      render: shell
+      placeholder: |
+        norupo-server --base-domain tunnel.example.com --tokens-file /etc/norupo/tokens.json
+        norupo http 3000 --server https://edge.tunnel.example.com:7000 --subdomain my-app
+        curl -v https://my-app.tunnel.example.com/
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `norupo --version` (and `norupo-server --version` if different).
+      placeholder: norupo 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux (Arch / CachyOS / EndeavourOS / Manjaro)
+        - Linux (Debian / Ubuntu)
+        - Linux (other)
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Edge deployment
+      options:
+        - Single node, in-memory routing table
+        - Multiple nodes with Redis
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Run both sides with `--log debug` and paste the relevant part. Redact
+        tokens and any hostname you would rather not publish.
+      render: text
