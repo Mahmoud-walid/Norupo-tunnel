@@ -225,7 +225,7 @@ pub fn validate_subdomain_syntax(label: &str) -> Result<String> {
 /// [`validate_subdomain`].
 #[must_use]
 pub fn random_subdomain() -> String {
-    use rand::Rng;
+    use rand::RngExt;
     let mut rng = rand::rng();
     let label: String = (0..GENERATED_SUBDOMAIN_LEN)
         .map(|_| SUBDOMAIN_ALPHABET[rng.random_range(0..SUBDOMAIN_ALPHABET.len())] as char)

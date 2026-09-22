@@ -3,7 +3,7 @@
 //! Norupo uses prefixed, URL-safe random ids rather than UUIDs so that an id
 //! pasted into a bug report immediately says what it is.
 
-use rand::Rng;
+use rand::RngExt;
 
 const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
 const RANDOM_LEN: usize = 16;
