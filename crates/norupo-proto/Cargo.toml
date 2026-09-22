@@ -1,0 +1,20 @@
+[package]
+name = "norupo-proto"
+description = "Generated gRPC/protobuf bindings for the Norupo tunnel wire protocol."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tonic.workspace = true
+tonic-prost = { workspace = true }
+prost = { workspace = true }
+
+[build-dependencies]
+tonic-prost-build = { workspace = true }
+protoc-bin-vendored = { workspace = true }
+
+[dev-dependencies]
+bytes = { workspace = true }

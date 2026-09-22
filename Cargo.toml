@@ -1,0 +1,54 @@
+[workspace]
+resolver = "2"
+members = ["crates/norupo-proto"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+repository = "https://github.com/Mahmoud-walid/Norupo-tunnel"
+
+[workspace.dependencies]
+norupo-proto = { path = "crates/norupo-proto", version = "0.1.0" }
+
+tonic = "0.14"
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+prost = "0.14"
+protoc-bin-vendored = "3.2"
+
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["io"] }
+futures = "0.3"
+
+hyper = { version = "1.11", features = ["http1", "http2", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "client", "client-legacy", "http1", "http2"] }
+http = "1.3"
+http-body-util = "0.1"
+bytes = "1.12"
+
+clap = { version = "4.6", features = ["derive", "env"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.9"
+
+dashmap = "6.1"
+redis = { version = "1.7", features = ["tokio-comp", "connection-manager", "script"] }
+
+anyhow = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+rand = "0.9"
+async-trait = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+# Deliberately NOT `panic = "abort"`. A panic in one request handler must kill
+# that task, not the edge process holding every other user's tunnel.
+panic = "unwind"
