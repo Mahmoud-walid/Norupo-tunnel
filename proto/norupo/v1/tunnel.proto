@@ -1,0 +1,273 @@
+syntax = "proto3";
+
+package norupo.v1;
+
+// Norupo tunnel control + data plane.
+//
+// A client holds exactly ONE long-lived bidirectional gRPC stream per agent
+// process (`TunnelControl.Session`). That single HTTP/2 stream carries:
+//
+//   * control traffic  - authentication, tunnel registration, heartbeats
+//   * data traffic     - every public request, multiplexed by `stream_id`
+//
+// Multiplexing on top of a single gRPC stream (rather than one gRPC stream per
+// public request) is deliberate: it keeps exactly one HTTP/2 stream per agent
+// on the edge, so an edge node's HTTP/2 stream table scales with the number of
+// AGENTS, not with concurrent public requests. It also means the server never
+// needs to dial the client, which is what makes Norupo work from behind NAT.
+//
+// Frame ordering guarantee: gRPC/HTTP2 gives us in-order, reliable delivery per
+// stream, so frames for a given `stream_id` are always observed in send order.
+service TunnelControl {
+  // The one and only long-lived RPC. See `ClientFrame` / `ServerFrame`.
+  rpc Session(stream ClientFrame) returns (stream ServerFrame);
+
+  // Cheap unauthenticated liveness probe, used by load balancers and by the
+  // CLI's `norupo doctor` command.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Client -> Server
+// ---------------------------------------------------------------------------
+
+message ClientFrame {
+  oneof payload {
+    // Must be the first frame on the stream.
+    Hello hello = 1;
+    // Ask the edge to route a hostname / port to this agent.
+    OpenTunnel open_tunnel = 2;
+    // Voluntarily give up a tunnel without tearing down the session.
+    CloseTunnel close_tunnel = 3;
+    // Response head for an HTTP stream the server opened.
+    HttpResponseHead response_head = 4;
+    // Payload bytes for an open stream (HTTP body or raw TCP).
+    StreamData data = 5;
+    // Half-close: no more bytes will be sent for this stream.
+    StreamEnd end = 6;
+    // Abortive teardown of a single stream.
+    StreamReset reset = 7;
+    // Grant the peer more send credit for a stream.
+    WindowUpdate window_update = 8;
+    // Reply to ServerFrame.ping.
+    Pong pong = 9;
+  }
+}
+
+message Hello {
+  // Opaque bearer credential. Validated by the server's `AuthProvider`.
+  string token = 1;
+  // Semver of the agent, used for compatibility gating and upgrade nudges.
+  string agent_version = 2;
+  // Wire protocol version. Bump on breaking frame changes.
+  uint32 protocol_version = 3;
+  // Free-form labels surfaced in dashboards (hostname, OS, region, ...).
+  map<string, string> metadata = 4;
+}
+
+message OpenTunnel {
+  // Client-chosen correlation id, echoed back in `TunnelStatus`.
+  string request_id = 1;
+  oneof spec {
+    HttpTunnelSpec http = 2;
+    TcpTunnelSpec tcp = 3;
+  }
+}
+
+message HttpTunnelSpec {
+  // Desired subdomain label, e.g. "api" for api.tunnel.com.
+  // Empty => the server assigns a random one.
+  string subdomain = 1;
+  // Fully-qualified custom domain. Requires an ownership-verified domain.
+  string custom_domain = 2;
+  // Local address the agent will forward to, e.g. "127.0.0.1:3000".
+  // Informational for the server; the agent is the one that dials it.
+  string forward_to = 3;
+  // Rewrite the Host header to the forward target (ngrok's `host_header`).
+  bool rewrite_host_header = 4;
+}
+
+message TcpTunnelSpec {
+  // Desired public port. 0 => the server assigns one from its pool.
+  uint32 remote_port = 1;
+  string forward_to = 2;
+}
+
+message CloseTunnel {
+  string tunnel_id = 1;
+}
+
+message HttpResponseHead {
+  uint64 stream_id = 1;
+  uint32 status = 2;
+  repeated Header headers = 3;
+}
+
+message StreamData {
+  uint64 stream_id = 1;
+  bytes payload = 2;
+}
+
+message StreamEnd {
+  uint64 stream_id = 1;
+  // Optional HTTP trailers (gRPC-over-tunnel needs these).
+  repeated Header trailers = 2;
+}
+
+message StreamReset {
+  uint64 stream_id = 1;
+  ResetCode code = 2;
+  string message = 3;
+}
+
+message WindowUpdate {
+  uint64 stream_id = 1;
+  // Additional bytes the sender is now willing to receive.
+  uint32 increment = 2;
+}
+
+message Pong {
+  // Echoed from the matching Ping; used to compute RTT.
+  uint64 nonce = 1;
+  // Agent-side timestamp in unix millis.
+  int64 client_time_ms = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Server -> Client
+// ---------------------------------------------------------------------------
+
+message ServerFrame {
+  oneof payload {
+    // Always the first frame; the server's answer to `Hello`.
+    Welcome welcome = 1;
+    // Outcome of an `OpenTunnel`.
+    TunnelStatus tunnel_status = 2;
+    // A new public connection arrived; start forwarding.
+    StreamOpen open = 3;
+    HttpResponseHead response_head = 4; // unused server-side; reserved
+    StreamData data = 5;
+    StreamEnd end = 6;
+    StreamReset reset = 7;
+    WindowUpdate window_update = 8;
+    Ping ping = 9;
+    // The edge is going away; reconnect elsewhere.
+    Shutdown shutdown = 10;
+  }
+}
+
+message Welcome {
+  // Server-assigned session id. Appears in logs on both sides.
+  string session_id = 1;
+  string server_version = 2;
+  // Identifies the edge node that terminated this session. This is the value
+  // written into the shared routing table so sibling nodes can find us.
+  string node_id = 3;
+  // How often the server will Ping. The agent should reconnect if it sees no
+  // traffic for ~2.5x this value.
+  uint32 heartbeat_interval_ms = 4;
+  // Per-stream flow-control window the server will honour, in bytes.
+  uint32 initial_window = 5;
+  // Account-level ceilings, so the CLI can fail fast client-side.
+  Limits limits = 6;
+}
+
+message Limits {
+  uint32 max_tunnels = 1;
+  uint32 max_concurrent_streams = 2;
+  uint64 max_bytes_per_second = 3;
+}
+
+message TunnelStatus {
+  // Correlates with `OpenTunnel.request_id`.
+  string request_id = 1;
+  string tunnel_id = 2;
+  bool accepted = 3;
+  // Human-readable rejection reason. Empty when `accepted`.
+  string error = 4;
+  // The public URL, e.g. "https://api.tunnel.com" or "tcp://edge:41235".
+  string public_url = 5;
+  // Canonical routing key stored in the routing table (lowercased host, or
+  // `tcp:PORT`). Useful for debugging and for `norupo status`.
+  string routing_key = 6;
+}
+
+message StreamOpen {
+  uint64 stream_id = 1;
+  string tunnel_id = 2;
+  StreamKind kind = 3;
+  // Present iff kind == STREAM_KIND_HTTP.
+  HttpRequestHead http = 4;
+  // Peer address of the public client, already normalised.
+  string remote_addr = 5;
+  // Initial send credit granted to the agent for this stream.
+  uint32 initial_window = 6;
+}
+
+message HttpRequestHead {
+  string method = 1;
+  // Origin-form target including query, e.g. "/v1/users?page=2".
+  string path = 2;
+  // The Host header as seen by the edge, pre-rewrite.
+  string authority = 3;
+  repeated Header headers = 4;
+  // "HTTP/1.1" or "HTTP/2".
+  string version = 5;
+  // Set when the public request asked for a protocol upgrade (WebSocket).
+  // After the agent replies 101, the stream degrades to raw bytes.
+  string upgrade = 6;
+}
+
+message Ping {
+  uint64 nonce = 1;
+  int64 server_time_ms = 2;
+}
+
+message Shutdown {
+  string reason = 1;
+  // Grace period before the edge hard-closes the session.
+  uint32 drain_ms = 2;
+  // Optional hint for where to reconnect.
+  string reconnect_to = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Shared
+// ---------------------------------------------------------------------------
+
+message Header {
+  string name = 1;
+  // `bytes`, not `string`: header values are not required to be UTF-8.
+  bytes value = 2;
+}
+
+enum StreamKind {
+  STREAM_KIND_UNSPECIFIED = 0;
+  STREAM_KIND_HTTP = 1;
+  STREAM_KIND_TCP = 2;
+}
+
+enum ResetCode {
+  RESET_CODE_UNSPECIFIED = 0;
+  // The agent could not reach its local service.
+  RESET_CODE_LOCAL_UNREACHABLE = 1;
+  // The public client hung up.
+  RESET_CODE_PEER_CLOSED = 2;
+  // Flow-control or protocol violation.
+  RESET_CODE_PROTOCOL_ERROR = 3;
+  RESET_CODE_TIMEOUT = 4;
+  RESET_CODE_INTERNAL = 5;
+  // Refused by policy (rate limit, ACL).
+  RESET_CODE_REFUSED = 6;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool ok = 1;
+  string node_id = 2;
+  string server_version = 3;
+  // Number of agent sessions currently terminated on this node.
+  uint64 active_sessions = 4;
+  uint64 active_tunnels = 5;
+}
