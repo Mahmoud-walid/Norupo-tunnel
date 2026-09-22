@@ -1,0 +1,234 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl gives one statically linked binary that runs on every glibc
+          # vintage and every distro — Arch, Debian, Alpine, NixOS alike.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          # glibc builds for distros that prefer dynamic linking.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: x86_64-apple-darwin
+            os: macos-13
+            cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --locked --version 0.2.5
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --release --workspace --target ${{ matrix.target }}
+
+      - name: Build (cargo)
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --workspace --target ${{ matrix.target }}
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          [ "${{ github.event_name }}" = "workflow_dispatch" ] && version="${{ inputs.tag }}"
+          name="norupo-${version#v}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/norupo" "dist/$name/"
+          cp "target/${{ matrix.target }}/release/norupo-server" "dist/$name/"
+          cp README.md LICENSE "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          # Checksums are what the AUR PKGBUILD and the install script verify.
+          (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          [ "${{ github.event_name }}" = "workflow_dispatch" ] && version="${{ inputs.tag }}"
+          name="norupo-${version#v}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/norupo.exe" "dist/$name/"
+          cp "target/${{ matrix.target }}/release/norupo-server.exe" "dist/$name/"
+          cp README.md LICENSE "dist/$name/"
+          7z a "dist/$name.zip" "./dist/$name/*"
+          certutil -hashfile "dist/$name.zip" SHA256 | sed -n 2p | tr -d ' \r' > "dist/$name.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: norupo-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+
+  archlinux-package:
+    name: Arch Linux package (.pkg.tar.zst)
+    runs-on: ubuntu-latest
+    needs: build
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Prepare a build user
+        # makepkg refuses to run as root, by design.
+        run: |
+          pacman -Sy --noconfirm --needed git rustup
+          useradd -m builder
+          chown -R builder:builder .
+
+      - name: Build the package
+        run: |
+          su builder -c '
+            set -eux
+            rustup default stable
+            cd packaging/aur/norupo-git
+            makepkg -sf --noconfirm --skipinteg
+          '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: norupo-archlinux
+          path: packaging/aur/norupo-git/*.pkg.tar.zst
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build, archlinux-package]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release assets
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.pkg.tar.zst' \) \
+            -exec cp {} release/ \;
+          # One combined checksum file is friendlier than N single-line ones.
+          (cd release && sha256sum * > SHA256SUMS)
+          ls -la release
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          draft: false
+          generate_release_notes: true
+          files: release/*
+          body: |
+            ## Install
+
+            **Arch Linux** (paru / yay)
+            ```sh
+            paru -S norupo-bin     # prebuilt
+            paru -S norupo         # build from source
+            ```
+
+            **Arch Linux** (pacman, from the attached package)
+            ```sh
+            sudo pacman -U norupo-*.pkg.tar.zst
+            ```
+
+            **Linux / macOS** (any distro — the musl builds are static)
+            ```sh
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.sh | sh
+            ```
+
+            **Windows** (PowerShell)
+            ```powershell
+            irm https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.ps1 | iex
+            ```
+
+            **From source** (any platform with Rust)
+            ```sh
+            cargo install --git https://github.com/${{ github.repository }} norupo-client norupo-server
+            ```
+
+            Verify a download against `SHA256SUMS` before running it.
+
+  aur:
+    name: Publish to the AUR
+    runs-on: ubuntu-latest
+    needs: publish
+    # Forks and dispatch runs must not try to push to the AUR.
+    if: github.event_name == 'push' && github.repository == 'Mahmoud-walid/Norupo-tunnel'
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [norupo, norupo-bin]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Render the PKGBUILD for this release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          bash packaging/aur/render.sh "${{ matrix.package }}" "$version"
+          cat "packaging/aur/${{ matrix.package }}/PKGBUILD"
+
+      - name: Push to the AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v4
+        with:
+          pkgname: ${{ matrix.package }}
+          pkgbuild: packaging/aur/${{ matrix.package }}/PKGBUILD
+          commit_username: ${{ vars.AUR_USERNAME || 'norupo-ci' }}
+          commit_email: ${{ vars.AUR_EMAIL || 'ci@norupo.dev' }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ github.ref_name }}"
+          updpkgsums: true
