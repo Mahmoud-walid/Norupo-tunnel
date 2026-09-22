@@ -56,7 +56,7 @@ jobs:
             cross: false
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -137,7 +137,7 @@ jobs:
           7z a "dist/$name.zip" "./dist/$name/*"
           certutil -hashfile "dist/$name.zip" SHA256 | sed -n 2p | tr -d ' \r' > "dist/$name.zip.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: norupo-${{ matrix.target }}
           path: |
@@ -152,7 +152,7 @@ jobs:
     needs: build
     container: archlinux:base-devel
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install build dependencies
         # makepkg refuses to run as root by design, and an unprivileged user
@@ -172,7 +172,7 @@ jobs:
             makepkg -f --noconfirm --skipinteg
           '
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: norupo-archlinux
           path: packaging/aur/norupo-git/*.pkg.tar.zst
@@ -183,9 +183,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build, archlinux-package]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -215,7 +215,7 @@ jobs:
           ls -la release
 
       - name: Publish
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           draft: false
@@ -284,7 +284,7 @@ jobs:
       matrix:
         package: [norupo, norupo-bin]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Render the PKGBUILD for this release
         shell: bash
