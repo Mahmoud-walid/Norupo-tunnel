@@ -193,10 +193,25 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.pkg.tar.zst' \) \
-            -exec cp {} release/ \;
+
+          # Archives and the Arch package. The `-debug` package is build-id
+          # symbols and is useless to anyone installing a release.
+          find artifacts -type f \
+            \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.pkg.tar.zst' \) \
+            ! -name '*-debug-*' -exec cp {} release/ \;
+
           # One combined checksum file is friendlier than N single-line ones.
+          # It must be generated BEFORE the sidecars are copied in, so that it
+          # keeps covering archives only rather than hashing its own siblings.
           (cd release && sha256sum * > SHA256SUMS)
+
+          # Both installers fetch `<asset>.sha256`. Without these they take
+          # their "no published checksum" branch, which warns and installs
+          # anyway - so a `curl | sh` would run an unverified binary despite
+          # the release notes telling people to verify.
+          find artifacts -type f -name '*.sha256' ! -name '*-debug-*' \
+            -exec cp {} release/ \;
+
           ls -la release
 
       - name: Publish
