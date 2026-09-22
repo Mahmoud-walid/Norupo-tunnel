@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fail fast on warnings everywhere, not just in the clippy job.
+  RUSTFLAGS: -D warnings
+  # Keep CI logs small and builds reproducible.
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The three platforms we ship binaries for. `protoc` is vendored by
+        # norupo-proto's build script, so none of these need extra setup.
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+      - name: Build
+        run: cargo build --workspace --all-targets
+      - name: Unit and integration tests
+        run: cargo test --workspace -- --nocapture
+      - name: Documentation examples
+        run: cargo test --workspace --doc
+
+  features:
+    name: feature combinations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Self-hosters who do not run Redis must still get a working build.
+      # Workspace-wide rather than per-crate: naming a crate here would break
+      # the job every time the workspace membership changes.
+      - name: Build without the Redis routing table
+        run: cargo build --workspace --all-targets --no-default-features
+      - name: Test without the Redis routing table
+        run: cargo test --workspace --no-default-features
+
+  msrv:
+    name: minimum supported Rust version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Keep this in step with `rust-version` in the workspace Cargo.toml.
+      # Declaring an MSRV without testing it is just a wrong comment.
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+      - run: cargo check --workspace --all-targets --all-features
+
+  docs:
+    name: rustdoc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Broken intra-doc links are the most common rot in a codebase this
+      # comment-heavy, so they are a hard failure.
+      - run: cargo doc --workspace --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  audit:
+    name: security advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # A single required check for branch protection to point at, so adding a
+  # matrix entry later does not mean editing the protection rule.
+  ci-ok:
+    name: CI passed
+    if: always()
+    needs: [fmt, clippy, test, features, msrv, docs]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify every gate succeeded
+        run: |
+          echo "fmt:      ${{ needs.fmt.result }}"
+          echo "clippy:   ${{ needs.clippy.result }}"
+          echo "test:     ${{ needs.test.result }}"
+          echo "features: ${{ needs.features.result }}"
+          echo "msrv:     ${{ needs.msrv.result }}"
+          echo "docs:     ${{ needs.docs.result }}"
+          [ "${{ needs.fmt.result }}" = "success" ] || exit 1
+          [ "${{ needs.clippy.result }}" = "success" ] || exit 1
+          [ "${{ needs.test.result }}" = "success" ] || exit 1
+          [ "${{ needs.features.result }}" = "success" ] || exit 1
+          [ "${{ needs.msrv.result }}" = "success" ] || exit 1
+          [ "${{ needs.docs.result }}" = "success" ] || exit 1
