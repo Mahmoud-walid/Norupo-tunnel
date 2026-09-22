@@ -1,0 +1,51 @@
+name: Feature request
+description: Propose something Norupo should do and does not.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Some things are deliberately not implemented, with the reasoning written
+        down — see the end of [docs/SCALING.md](../../blob/main/docs/SCALING.md)
+        and the failure table in
+        [docs/ARCHITECTURE.md](../../blob/main/docs/ARCHITECTURE.md). Worth a
+        look first; if you disagree with the reasoning, say so, that is a fine
+        proposal on its own.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that you currently cannot?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like instead
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Wire protocol
+        - Edge server
+        - Agent CLI
+        - Scaling / routing table
+        - Packaging or install
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: protocol
+    attributes:
+      label: Protocol impact
+      options:
+        - label: This would need a change to `proto/norupo/v1/tunnel.proto`
+        - label: This would break agents already deployed
