@@ -1,11 +1,17 @@
 [package]
 name = "norupo-core"
-description = "Shared domain logic for Norupo: routing keys, subdomain policy, auth and identifiers."
+description = "Shared domain logic for Norupo: routing keys, the distributed routing table, auth and config."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+
+[features]
+default = ["redis-registry"]
+# The Redis-backed routing table. Disable for single-node / embedded builds to
+# drop the redis dependency entirely.
+redis-registry = ["dep:redis"]
 
 [dependencies]
 anyhow.workspace = true
@@ -14,6 +20,7 @@ rand.workspace = true
 serde = { workspace = true }
 thiserror.workspace = true
 tracing.workspace = true
+redis = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
