@@ -35,3 +35,12 @@ updates:
     commit-message:
       prefix: "ci"
     labels: [dependencies, ci]
+    ignore:
+      # `dtolnay/rust-toolchain@1.88` is NOT a version tag - that action reads
+      # its ref as a Rust toolchain selector, so the ref *is* our declared
+      # MSRV. Dependabot cannot tell the difference and "updated" it to
+      # @1.120, which would have turned the MSRV job into a second copy of the
+      # stable test and made `rust-version` in Cargo.toml the untested wrong
+      # comment that job exists to prevent. The pin moves by hand, when the
+      # MSRV genuinely moves.
+      - dependency-name: dtolnay/rust-toolchain
