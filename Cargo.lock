@@ -896,6 +896,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "norupo-client",
  "norupo-core",
  "norupo-proto",
  "prost",
