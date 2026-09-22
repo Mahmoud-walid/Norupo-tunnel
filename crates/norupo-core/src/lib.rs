@@ -8,6 +8,7 @@
 pub mod auth;
 pub mod error;
 pub mod ids;
+pub mod registry;
 pub mod routing;
 
 pub use error::{Error, Result};
