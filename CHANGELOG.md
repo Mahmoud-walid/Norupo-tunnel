@@ -9,6 +9,43 @@ While Norupo is pre-1.0, a breaking change may ship in a minor release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-23
+
+No user-facing behaviour changes: the protocol, the edge and the agent do
+exactly what 0.1.0 did. This release is packaging, supply chain and repository
+health.
+
+### Added
+
+- A security policy with a private reporting route, and an explicit
+  out-of-scope list so that documented behaviour - `--allow-anonymous`, the
+  cluster-internal peer listener - does not generate reports.
+- Automated dependency updates for both `cargo` and `github-actions`.
+  `cargo audit` already reported advisories; nothing opened the pull request
+  that fixes them.
+- Issue and pull request templates, and this changelog.
+- The hardened systemd unit and `server.env` now ship inside the Linux release
+  archives, so `norupo-bin` installs the same server-side files as `norupo`.
+
+### Changed
+
+- `rand` upgraded to 0.10, which moved `random_range` to a new `RngExt` trait.
+  No logic change.
+
+### Removed
+
+- Eight declared-but-unused dependencies: `toml`, `prost`, `futures`,
+  `tokio-util` and `async-trait` from the server; `futures`, `serde` and
+  `serde_json` from the client. Each was verified by removing it and building.
+
+### Fixed
+
+- Dependabot was rewriting `dtolnay/rust-toolchain@1.88` - which is a Rust
+  toolchain selector, not a version tag - and would have silently turned the
+  MSRV job into a second copy of the stable test.
+- `norupo-bin` declared `backup=('etc/norupo/server.env')` for a file it never
+  installed.
+
 ## [0.1.0] - 2026-09-22
 
 First release. The HTTP tunnel path is complete and covered end to end.
@@ -55,5 +92,6 @@ First release. The HTTP tunnel path is complete and covered end to end.
 - Automatic TCP port assignment (`remote_port = 0`) is not implemented.
 - Reconnect steering (`Shutdown.reconnect_to`) is in the contract but unused.
 
-[Unreleased]: https://github.com/Mahmoud-walid/Norupo-tunnel/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Mahmoud-walid/Norupo-tunnel/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Mahmoud-walid/Norupo-tunnel/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Mahmoud-walid/Norupo-tunnel/releases/tag/v0.1.0
