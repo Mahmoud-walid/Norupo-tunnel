@@ -288,32 +288,91 @@ jobs:
           fi
 
   aur:
-    name: Publish to the AUR
+    name: Publish to the AUR (${{ matrix.package }})
     runs-on: ubuntu-latest
+    # Same image the package job already builds in. makepkg, updpkgsums and
+    # --printsrcinfo all need a real Arch environment.
+    container: archlinux:base-devel
     needs: [publish, aur-configured]
     if: needs.aur-configured.outputs.configured == 'true'
     strategy:
       fail-fast: false
       matrix:
         package: [norupo, norupo-bin]
+
     steps:
       - uses: actions/checkout@v7
 
-      - name: Render the PKGBUILD for this release
-        shell: bash
+      - name: Install tooling
+        # pacman-contrib provides updpkgsums.
+        run: pacman -Sy --noconfirm --needed git openssh pacman-contrib
+
+      - name: Configure SSH for the AUR
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          bash packaging/aur/render.sh "${{ matrix.package }}" "$version"
-          cat "packaging/aur/${{ matrix.package }}/PKGBUILD"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
 
-      - name: Push to the AUR
-        uses: KSXGitHub/github-actions-deploy-aur@v4
-        with:
-          pkgname: ${{ matrix.package }}
-          pkgbuild: packaging/aur/${{ matrix.package }}/PKGBUILD
-          commit_username: ${{ vars.AUR_USERNAME || 'norupo-ci' }}
-          commit_email: ${{ vars.AUR_EMAIL || 'ci@norupo.dev' }}
-          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update to ${{ github.ref_name }}"
-          updpkgsums: true
+          # Pin the host key instead of trusting whatever answers on that
+          # name. This key can push to the maintainer's whole AUR account, so
+          # trust-on-first-use is not good enough: a hijacked DNS answer would
+          # be handed a working credential.
+          ssh-keyscan -t ed25519 aur.archlinux.org > ~/.ssh/known_hosts 2>/dev/null
+          actual="$(ssh-keygen -lf ~/.ssh/known_hosts | awk '{print $2}')"
+          expected="SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::AUR host key mismatch: got $actual, expected $expected"
+            exit 1
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+          cat > ~/.ssh/config <<'EOF'
+          Host aur.archlinux.org
+            User aur
+            IdentityFile ~/.ssh/aur
+            IdentitiesOnly yes
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Publish ${{ matrix.package }}
+        env:
+          PKG: ${{ matrix.package }}
+          REF_NAME: ${{ github.ref_name }}
+          AUR_USERNAME: ${{ vars.AUR_USERNAME || 'norupo-ci' }}
+          AUR_EMAIL: ${{ vars.AUR_EMAIL || 'ci@norupo.dev' }}
+        run: |
+          set -euo pipefail
+          version="${REF_NAME#v}"
+
+          bash packaging/aur/render.sh "$PKG" "$version"
+
+          git config --global user.name "$AUR_USERNAME"
+          git config --global user.email "$AUR_EMAIL"
+          git config --global --add safe.directory '*'
+
+          # Cloning a package that does not exist yet returns an empty
+          # repository; the first push is what creates it on the AUR.
+          git clone "ssh://aur@aur.archlinux.org/$PKG.git" aur
+          cp "packaging/aur/$PKG/PKGBUILD" aur/PKGBUILD
+
+          # makepkg refuses to run as root by design, and both updpkgsums and
+          # --printsrcinfo go through it.
+          useradd -m builder
+          chown -R builder:builder aur
+          su builder -c 'cd aur && updpkgsums && makepkg --printsrcinfo > .SRCINFO'
+
+          cd aur
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "$PKG is already at $version on the AUR; nothing to push."
+            exit 0
+          fi
+
+          echo "--- PKGBUILD ---"; cat PKGBUILD
+          git commit -m "Update to $REF_NAME"
+          # The AUR expects `master`; git may have named the local branch
+          # something else, so be explicit rather than relying on the default.
+          git push origin HEAD:refs/heads/master
