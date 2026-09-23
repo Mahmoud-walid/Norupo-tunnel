@@ -796,7 +796,7 @@ checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
 name = "norupo-client"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -816,7 +816,7 @@ dependencies = [
 
 [[package]]
 name = "norupo-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -830,7 +830,7 @@ dependencies = [
 
 [[package]]
 name = "norupo-proto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "prost",
@@ -842,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "norupo-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bytes",
