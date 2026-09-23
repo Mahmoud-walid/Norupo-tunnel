@@ -505,7 +505,12 @@ jobs:
           "
 
           mkdir -p repo
-          cp packaging/aur/norupo-bin/*.pkg.tar.zst repo/
+          # `-debug` is build-id symbols for binaries that were not even built
+          # here. The publish job already filters it out of the release
+          # assets; without the same filter, repo-add indexes it and every
+          # `pacman -Sy` downloads a database advertising it.
+          find packaging/aur/norupo-bin -maxdepth 1 -name '*.pkg.tar.zst' \
+            ! -name '*-debug-*' -exec cp {} repo/ \;
           cd repo
 
           # An array, not a `${x:+...}` expansion: that expands unquoted and
@@ -524,17 +529,24 @@ jobs:
           # `SigLevel = Required` would reject the database outright.
           repo-add -s -v -k "$keyid" norupo.db.tar.gz ./*.pkg.tar.zst
 
-          # repo-add leaves `norupo.db` as a symlink to the tarball. A GitHub
-          # release asset cannot be a symlink, and `norupo.db` is the name
-          # pacman actually fetches, so materialise both names as real files.
-          for ext in db files; do
-            cp -L "norupo.$ext.tar.gz" "norupo.$ext"
-            # A real `if`: a false `[ ... ]` as the last statement in the loop
-            # body makes the whole loop exit 1, which `set -e` turns into a
-            # failed release.
-            if [ -f "norupo.$ext.tar.gz.sig" ]; then
-              cp -L "norupo.$ext.tar.gz.sig" "norupo.$ext.sig"
-            fi
+          # repo-add leaves `norupo.db` as a symlink to `norupo.db.tar.gz`,
+          # and the same for `.files` and both `.sig`s. A GitHub release asset
+          # cannot be a symlink, and `norupo.db` is the name pacman actually
+          # fetches, so each has to become a real file.
+          #
+          # The destination is removed first. `cp -L src dst` where dst is the
+          # symlink pointing at src resolves both sides to one inode, and cp
+          # refuses with "are the same file" - which is how this failed the
+          # first time it ran.
+          for base in db files; do
+            for suffix in "" .sig; do
+              src="norupo.$base.tar.gz$suffix"
+              dst="norupo.$base$suffix"
+              if [ -f "$src" ]; then
+                rm -f "$dst"
+                cp "$src" "$dst"
+              fi
+            done
           done
           rm -f ./*.old ./*.old.sig
 
