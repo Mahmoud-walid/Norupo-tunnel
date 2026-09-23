@@ -60,7 +60,7 @@ configured below to refuse anything that is not:
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Mahmoud-walid/Norupo-tunnel/main/packaging/pacman/norupo-signing-key.asc \
   | sudo pacman-key --add -
-sudo pacman-key --lsign-key REPLACE_WITH_FINGERPRINT
+sudo pacman-key --lsign-key B71DFB01B5A3188C8E8D70F2C45F95F418FD0155
 ```
 
 Then append to `/etc/pacman.conf`:

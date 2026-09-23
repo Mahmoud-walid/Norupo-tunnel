@@ -459,6 +459,22 @@ jobs:
             exit 1
           fi
           echo "signing with $keyid"
+
+          # The key that signs must be the key users were told to trust. If a
+          # rotated secret ever lands without the shipped public key and the
+          # README being updated with it, every client running the documented
+          # `SigLevel = Required` starts rejecting the repository - and the
+          # failure surfaces on their machines, not here. Catch it here.
+          # --with-colons must precede --import: --import treats every
+          # remaining argument as a file to read.
+          shipped="$(gpg --batch --quiet --with-colons \
+            --import-options show-only --import \
+            packaging/pacman/norupo-signing-key.asc \
+            | awk -F: '/^fpr:/ {print $10; exit}')"
+          if [ "$keyid" != "$shipped" ]; then
+            echo "::error::PACKAGE_GPG_PRIVATE_KEY is $keyid, but packaging/pacman/norupo-signing-key.asc is $shipped"
+            exit 1
+          fi
           # Mark it ultimately trusted in this throwaway keyring so repo-add's
           # own verification pass (`-v`) accepts the signatures we just made.
           echo "$keyid:6:" | gpg --batch --import-ownertrust

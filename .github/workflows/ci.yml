@@ -113,10 +113,21 @@ jobs:
 
   # A single required check for branch protection to point at, so adding a
   # matrix entry later does not mean editing the protection rule.
+  packaging:
+    name: packaging metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The fingerprint users are told to trust and the key this repository
+      # ships are copied by hand between two files. A drift there is a trust
+      # bug, not a typo, so it fails CI rather than being noticed by a user
+      # whose `pacman -Sy` starts rejecting the repository.
+      - run: bash scripts/check-signing-key.sh
+
   ci-ok:
     name: CI passed
     if: always()
-    needs: [fmt, clippy, test, features, msrv, docs]
+    needs: [fmt, clippy, test, features, msrv, docs, packaging]
     runs-on: ubuntu-latest
     steps:
       - name: Verify every gate succeeded
