@@ -312,38 +312,15 @@ jobs:
         # pacman-contrib provides updpkgsums.
         run: pacman -Sy --noconfirm --needed git openssh pacman-contrib
 
-      - name: Configure SSH for the AUR
+      # SSH setup and publish are ONE step on purpose. Written as two, the
+      # `~/.ssh` files created by the first were not visible to the second -
+      # HOME is not reliably the same across steps in a container job - and
+      # git failed with "Host key verification failed" on a key that had just
+      # been pinned successfully. Absolute paths and an explicit
+      # GIT_SSH_COMMAND remove the dependency on HOME entirely.
+      - name: Publish ${{ matrix.package }} to the AUR
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
-          chmod 600 ~/.ssh/aur
-
-          # Pin the host key instead of trusting whatever answers on that
-          # name. This key can push to the maintainer's whole AUR account, so
-          # trust-on-first-use is not good enough: a hijacked DNS answer would
-          # be handed a working credential.
-          ssh-keyscan -t ed25519 aur.archlinux.org > ~/.ssh/known_hosts 2>/dev/null
-          actual="$(ssh-keygen -lf ~/.ssh/known_hosts | awk '{print $2}')"
-          expected="SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::AUR host key mismatch: got $actual, expected $expected"
-            exit 1
-          fi
-          chmod 600 ~/.ssh/known_hosts
-
-          cat > ~/.ssh/config <<'EOF'
-          Host aur.archlinux.org
-            User aur
-            IdentityFile ~/.ssh/aur
-            IdentitiesOnly yes
-          EOF
-          chmod 600 ~/.ssh/config
-
-      - name: Publish ${{ matrix.package }}
-        env:
           PKG: ${{ matrix.package }}
           # `github.ref_name` is the branch on a dispatch, not a tag, so it has
           # to resolve the same way the build and publish jobs do - otherwise a
@@ -354,6 +331,28 @@ jobs:
         run: |
           set -euo pipefail
           version="${REF_NAME#v}"
+
+          ssh_dir=/tmp/aur-ssh
+          install -d -m 700 "$ssh_dir"
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$ssh_dir/key"
+          chmod 600 "$ssh_dir/key"
+
+          # Pin the host key instead of trusting whatever answers on that
+          # name. This key can push to the maintainer's whole AUR account, so
+          # trust-on-first-use is not good enough: a hijacked DNS answer would
+          # be handed a working credential.
+          ssh-keyscan -t ed25519 aur.archlinux.org > "$ssh_dir/known_hosts" 2>/dev/null
+          actual="$(ssh-keygen -lf "$ssh_dir/known_hosts" | awk '{print $2}')"
+          expected="SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::AUR host key mismatch: got $actual, expected $expected"
+            exit 1
+          fi
+
+          # StrictHostKeyChecking=yes is stated rather than assumed: if the
+          # pinned known_hosts ever goes missing, this must fail loudly rather
+          # than fall back to trust-on-first-use.
+          export GIT_SSH_COMMAND="ssh -i $ssh_dir/key -o UserKnownHostsFile=$ssh_dir/known_hosts -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
 
           bash packaging/aur/render.sh "$PKG" "$version"
 
