@@ -9,6 +9,14 @@ While Norupo is pre-1.0, a breaking change may ship in a minor release.
 
 ## [Unreleased]
 
+### Added
+
+- A signed pacman repository, published to the `repo-x86_64` and
+  `repo-aarch64` release tags on every tagged release. Adding one block to
+  `/etc/pacman.conf` makes `pacman -S norupo-bin` and `pacman -Syu` work with
+  no AUR helper at all - which the AUR by itself can never do, since it serves
+  PKGBUILDs rather than a package database.
+
 ## [0.1.1] - 2026-09-23
 
 No user-facing behaviour changes: the protocol, the edge and the agent do

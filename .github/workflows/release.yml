@@ -243,6 +243,16 @@ jobs:
             paru -S norupo         # build from source
             ```
 
+            **Arch Linux** (pacman repository — `pacman -S`, and upgrades with `pacman -Syu`)
+            ```ini
+            # /etc/pacman.conf
+            [norupo]
+            SigLevel = Required DatabaseOptional
+            Server = https://github.com/${{ github.repository }}/releases/download/repo-$arch
+            ```
+            Trust the signing key first: see
+            [Install](https://github.com/${{ github.repository }}#arch-linux-pacman-repository).
+
             **Arch Linux** (pacman, from the attached package)
             ```sh
             sudo pacman -U norupo-*.pkg.tar.zst
@@ -383,3 +393,158 @@ jobs:
           # The AUR expects `master`; git may have named the local branch
           # something else, so be explicit rather than relying on the default.
           git push origin HEAD:refs/heads/master
+
+  # Same job-output dance as `aur-configured`, and for the same reason:
+  # `secrets` cannot be read from a job-level `if`.
+  pacman-repo-configured:
+    name: Check package signing key
+    runs-on: ubuntu-latest
+    if: github.repository == 'Mahmoud-walid/Norupo-tunnel'
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        env:
+          PACKAGE_GPG_PRIVATE_KEY: ${{ secrets.PACKAGE_GPG_PRIVATE_KEY }}
+        run: |
+          if [ -n "$PACKAGE_GPG_PRIVATE_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::PACKAGE_GPG_PRIVATE_KEY is not set; skipping the pacman repository publish."
+          fi
+
+  # A real pacman repository, so `pacman -S norupo-bin` works after one block
+  # in /etc/pacman.conf and no AUR helper at all. The AUR cannot do this: it
+  # serves PKGBUILDs, not a database, which is why `pacman -Ss` never finds an
+  # AUR package.
+  pacman-repo:
+    name: Publish the pacman repository (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    needs: [publish, pacman-repo-configured]
+    if: needs.pacman-repo-configured.outputs.configured == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install tooling
+        # pacman-contrib provides updpkgsums; repo-add ships with pacman.
+        run: pacman -Sy --noconfirm --needed git gnupg pacman-contrib
+
+      - name: Build and sign the repository
+        env:
+          PACKAGE_GPG_PRIVATE_KEY: ${{ secrets.PACKAGE_GPG_PRIVATE_KEY }}
+          PACKAGE_GPG_PASSPHRASE: ${{ secrets.PACKAGE_GPG_PASSPHRASE }}
+          ARCH: ${{ matrix.arch }}
+          REF_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${REF_NAME#v}"
+
+          export GNUPGHOME=/tmp/gnupg
+          install -d -m 700 "$GNUPGHOME"
+          # allow-loopback-pinentry covers a key that does carry a passphrase.
+          # A CI signing key should not, but failing on pinentry inside a
+          # container is a miserable way to find that out.
+          echo "allow-loopback-pinentry" > "$GNUPGHOME/gpg-agent.conf"
+          printf '%s\n' "$PACKAGE_GPG_PRIVATE_KEY" | gpg --batch --import
+          keyid="$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')"
+          if [ -z "$keyid" ]; then
+            echo "::error::no secret key found in PACKAGE_GPG_PRIVATE_KEY"
+            exit 1
+          fi
+          echo "signing with $keyid"
+          # Mark it ultimately trusted in this throwaway keyring so repo-add's
+          # own verification pass (`-v`) accepts the signatures we just made.
+          echo "$keyid:6:" | gpg --batch --import-ownertrust
+
+          # Cross-building is a CARCH override and nothing more: norupo-bin
+          # compiles nothing, it repackages the musl binaries this release
+          # already published. Editing /etc/makepkg.conf rather than passing
+          # --config keeps updpkgsums, which has no --config, on the same view.
+          if [ "$ARCH" != "x86_64" ]; then
+            sed -i -E "s/^CARCH=.*/CARCH=\"$ARCH\"/" /etc/makepkg.conf
+            sed -i -E "s/^CHOST=.*/CHOST=\"$ARCH-unknown-linux-gnu\"/" /etc/makepkg.conf
+          fi
+
+          bash packaging/aur/render.sh norupo-bin "$version"
+
+          useradd -m builder
+          chown -R builder:builder .
+          git config --global --add safe.directory '*'
+
+          # makepkg refuses to run as root by design; updpkgsums goes through
+          # it too. It downloads the release tarballs and pins their real
+          # hashes, so a tampered asset fails the build rather than the user.
+          su builder -c "
+            set -eux
+            cd packaging/aur/norupo-bin
+            updpkgsums
+            makepkg -f --noconfirm
+          "
+
+          mkdir -p repo
+          cp packaging/aur/norupo-bin/*.pkg.tar.zst repo/
+          cd repo
+
+          # An array, not a `${x:+...}` expansion: that expands unquoted and
+          # would split a passphrase containing a space into two arguments.
+          gpg_args=(--batch --yes --pinentry-mode loopback)
+          if [ -n "$PACKAGE_GPG_PASSPHRASE" ]; then
+            gpg_args+=(--passphrase "$PACKAGE_GPG_PASSPHRASE")
+          fi
+
+          for pkg in *.pkg.tar.zst; do
+            gpg "${gpg_args[@]}" --detach-sign --no-armor -u "$keyid" "$pkg"
+          done
+
+          # -s signs the database, -v verifies the package signatures made
+          # above. Without -s a client running the documented
+          # `SigLevel = Required` would reject the database outright.
+          repo-add -s -v -k "$keyid" norupo.db.tar.gz ./*.pkg.tar.zst
+
+          # repo-add leaves `norupo.db` as a symlink to the tarball. A GitHub
+          # release asset cannot be a symlink, and `norupo.db` is the name
+          # pacman actually fetches, so materialise both names as real files.
+          for ext in db files; do
+            cp -L "norupo.$ext.tar.gz" "norupo.$ext"
+            # A real `if`: a false `[ ... ]` as the last statement in the loop
+            # body makes the whole loop exit 1, which `set -e` turns into a
+            # failed release.
+            if [ -f "norupo.$ext.tar.gz.sig" ]; then
+              cp -L "norupo.$ext.tar.gz.sig" "norupo.$ext.sig"
+            fi
+          done
+          rm -f ./*.old ./*.old.sig
+
+          ls -la
+
+      - name: Publish the repository
+        uses: softprops/action-gh-release@v3
+        with:
+          # `pacman` substitutes $arch in Server=, so one line in pacman.conf
+          # covers both architectures.
+          tag_name: repo-${{ matrix.arch }}
+          name: pacman repository (${{ matrix.arch }})
+          # Never `latest`: the install scripts and every README link resolve
+          # the latest release, and a repository drop is not a release.
+          prerelease: true
+          make_latest: "false"
+          files: repo/*
+          body: |
+            This is not a release. It is the `${{ matrix.arch }}` half of the
+            Norupo pacman repository, republished on every tagged release.
+
+            ```ini
+            [norupo]
+            SigLevel = Required DatabaseOptional
+            Server = https://github.com/${{ github.repository }}/releases/download/repo-$arch
+            ```
+
+            See [Install](https://github.com/${{ github.repository }}#arch-linux-pacman-repository)
+            for the key you must trust first.

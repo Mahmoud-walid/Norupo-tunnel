@@ -48,6 +48,35 @@ or with `pacman`, from the package attached to each release:
 sudo pacman -U norupo-*.pkg.tar.zst
 ```
 
+### Arch Linux (pacman repository)
+
+The AUR is not a pacman repository, so `pacman -Ss norupo` will never find it.
+If you want `pacman -S` and ordinary `pacman -Syu` upgrades with no AUR helper,
+add the Norupo repository.
+
+Trust the signing key first — the repository is signed, and `pacman` is
+configured below to refuse anything that is not:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Mahmoud-walid/Norupo-tunnel/main/packaging/pacman/norupo-signing-key.asc \
+  | sudo pacman-key --add -
+sudo pacman-key --lsign-key REPLACE_WITH_FINGERPRINT
+```
+
+Then append to `/etc/pacman.conf`:
+
+```ini
+[norupo]
+SigLevel = Required DatabaseOptional
+Server = https://github.com/Mahmoud-walid/Norupo-tunnel/releases/download/repo-$arch
+```
+
+```sh
+sudo pacman -Sy norupo-bin
+```
+
+`x86_64` and `aarch64` are both served; `pacman` substitutes `$arch` itself.
+
 **Any Linux distribution, or macOS:**
 
 ```sh
