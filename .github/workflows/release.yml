@@ -272,7 +272,12 @@ jobs:
   aur-configured:
     name: Check AUR credentials
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.repository == 'Mahmoud-walid/Norupo-tunnel'
+    # Repository check only, deliberately. A fork has a different
+    # `github.repository` and would not hold the secret anyway, so gating on
+    # the event as well only stopped the maintainer from re-running their own
+    # publish - which is the step most likely to fail transiently, and the one
+    # whose only other recovery is inventing a version number.
+    if: github.repository == 'Mahmoud-walid/Norupo-tunnel'
     outputs:
       configured: ${{ steps.check.outputs.configured }}
     steps:
@@ -340,7 +345,10 @@ jobs:
       - name: Publish ${{ matrix.package }}
         env:
           PKG: ${{ matrix.package }}
-          REF_NAME: ${{ github.ref_name }}
+          # `github.ref_name` is the branch on a dispatch, not a tag, so it has
+          # to resolve the same way the build and publish jobs do - otherwise a
+          # dispatched run would try to publish a version called "main".
+          REF_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           AUR_USERNAME: ${{ vars.AUR_USERNAME || 'norupo-ci' }}
           AUR_EMAIL: ${{ vars.AUR_EMAIL || 'ci@norupo.dev' }}
         run: |
